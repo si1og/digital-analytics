@@ -1,0 +1,61 @@
+\section*{Приложение A. Исходный код всех программ, использовавшихся в лабораторной работе (в комментариях приведены названия файлов)}
+\addcontentsline{toc}{section}{Приложение A. Исходный код всех программ, использовавшихся в лабораторной работе (в комментариях приведены названия файлов)}
+
+\renewcommand{\theFancyVerbLine}{%
+    \scriptsize\ttfamily\textcolor{gray}{\arabic{FancyVerbLine}}%
+}
+
+\begin{minted}[linenos, numbersep=10pt, firstnumber=1, fontsize=\scriptsize]{matlab}
+% ** task1.m **
+format long g
+
+x = [0.050, 0.052, 0.060, 0.065, 0.069, 0.075, 0.085, 0.090, 0.096];
+y = [0.2079, 0.2081, 0.2090, 0.2095, 0.2099, 0.2105, 0.2116, 0.2121, 0.2127];
+
+h = diff(x);
+delta = diff(y) ./ h;
+n = length(x) - 1;
+
+A = zeros(n + 1, n + 1);
+b = zeros(n + 1, 1);
+
+for i = 2:n
+    A(i - 1, i - 1) = h(i - 1);
+    A(i - 1, i) = 2 * (h(i - 1) + h(i));
+    A(i - 1, i + 1) = h(i);
+    b(i - 1) = 6 * (delta(i) - delta(i - 1));
+end
+
+A(n, 1) = 2 * (h(n) + h(1));
+A(n, 2) = h(1);
+A(n, n) = h(n);
+b(n) = 6 * (delta(1) - delta(n));
+
+A(n + 1, 1) = 1;
+A(n + 1, n + 1) = -1;
+b(n + 1) = 0;
+
+M = A \ b;
+
+for i = 1:n
+    a(i) = y(i);
+    bcoef(i) = delta(i) - h(i) * (2 * M(i) + M(i + 1)) / 6;
+    c(i) = M(i) / 2;
+    d(i) = (M(i + 1) - M(i)) / (6 * h(i));
+end
+
+fprintf(' i      x_i        M_i\n');
+fprintf('--------------------------\n');
+for i = 1:n+1
+    fprintf('%2d   %8.4f   %10.4f\n', i-1, x(i), M(i));
+end
+
+fprintf('\n');
+
+fprintf(' i      a_i        b_i        c_i        d_i\n');
+fprintf('-----------------------------------------------\n');
+for i = 1:n
+    fprintf('%2d   %8.4f   %8.4f   %8.4f   %10.4f\n', ...
+        i-1, a(i), bcoef(i), c(i), d(i));
+end
+\end{minted}
