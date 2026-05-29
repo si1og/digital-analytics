@@ -64,7 +64,8 @@ async function requestAnalysis(
     })
 
     if (!response.ok) {
-      throw new Error('Цвет не распознан')
+      const errorBody = await response.json().catch(() => null)
+      throw new Error(errorBody?.detail || 'Цвет не распознан')
     }
 
     return await response.json()

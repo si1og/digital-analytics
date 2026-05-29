@@ -1,3 +1,5 @@
+import math
+import re
 from typing import Any, Literal
 
 from coloraide.everything import ColorAll as Color
@@ -19,6 +21,10 @@ FORMAT_TO_SPACE: dict[str, str] = {
 
 SUPPORTED_FORMATS = list(FORMAT_TO_SPACE.keys())
 
+HEX_PATTERN = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+FUNCTION_PATTERN = re.compile(r"^(?P<name>rgb|lab|lch|oklch)\((?P<body>.*)\)$", re.IGNORECASE)
+CMYK_PATTERN = re.compile(r"^color\(\s*--cmyk\s+(?P<body>.*)\)$", re.IGNORECASE)
+
 app = FastAPI(title="Palette Contrast API")
 app.add_middleware(
     CORSMiddleware,
@@ -39,11 +45,101 @@ class AnalyzeRequest(ConvertRequest):
     text_color: str | None = Field(default=None, max_length=64)
 
 
-def parse_color(value: str) -> Color:
+def split_components(body: str) -> list[str]:
+    if "/" in body:
+        raise HTTPException(status_code=400, detail="Альфа-канал не поддерживается")
+    return [part for part in re.split(r"[\s,]+", body.strip()) if part]
+
+
+def parse_component(token: str, *, allow_percent: bool = False) -> tuple[float, bool]:
+    is_percent = token.endswith("%")
+    if is_percent and not allow_percent:
+        raise HTTPException(status_code=400, detail=f"Проценты здесь не поддерживаются: {token}")
+
+    raw = token[:-1] if is_percent else token
     try:
-        return Color(value.strip())
+        value = float(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Некорректное числовое значение: {token}") from exc
+
+    if not math.isfinite(value):
+        raise HTTPException(status_code=400, detail=f"Некорректное числовое значение: {token}")
+
+    return value, is_percent
+
+
+def check_range(name: str, value: float, min_value: float, max_value: float) -> None:
+    if value < min_value or value > max_value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{name}: значение должно быть в диапазоне {min_value:g}..{max_value:g}",
+        )
+
+
+def validate_color_value(value: str) -> str:
+    normalized = value.strip()
+
+    if HEX_PATTERN.fullmatch(normalized):
+        return normalized
+
+    function_match = FUNCTION_PATTERN.fullmatch(normalized)
+    cmyk_match = CMYK_PATTERN.fullmatch(normalized)
+
+    if function_match:
+        name = function_match.group("name").lower()
+        parts = split_components(function_match.group("body"))
+
+        if len(parts) != 3:
+            raise HTTPException(status_code=400, detail=f"{name}() должен содержать ровно 3 компонента")
+
+        parsed = [parse_component(part, allow_percent=name == "rgb") for part in parts]
+        values = [component for component, _ in parsed]
+
+        if name == "rgb":
+            for index, (component, is_percent) in enumerate(parsed, start=1):
+                if is_percent:
+                    check_range(f"sRGB, компонент {index}", component, 0, 100)
+                else:
+                    check_range(f"sRGB, компонент {index}", component, 0, 255)
+        elif name == "lab":
+            check_range("CIELAB, светлота L", values[0], 0, 100)
+            check_range("CIELAB, координата a", values[1], -128, 127)
+            check_range("CIELAB, координата b", values[2], -128, 127)
+        elif name == "lch":
+            check_range("LCH, светлота L", values[0], 0, 100)
+            check_range("LCH, насыщенность C", values[1], 0, 150)
+            check_range("LCH, тон H", values[2], 0, 360)
+        elif name == "oklch":
+            check_range("OKLCH, светлота L", values[0], 0, 1)
+            check_range("OKLCH, насыщенность C", values[1], 0, 0.4)
+            check_range("OKLCH, тон H", values[2], 0, 360)
+
+        return normalized
+
+    if cmyk_match:
+        parts = split_components(cmyk_match.group("body"))
+
+        if len(parts) != 4:
+            raise HTTPException(status_code=400, detail="color(--cmyk ...) должен содержать ровно 4 компонента")
+
+        for index, part in enumerate(parts, start=1):
+            component, is_percent = parse_component(part, allow_percent=True)
+            if is_percent:
+                check_range(f"CMYK, компонент {index}", component, 0, 100)
+            else:
+                check_range(f"CMYK, компонент {index}", component, 0, 1)
+
+        return normalized
+
+    raise HTTPException(status_code=400, detail="Неподдерживаемый формат цвета")
+
+
+def parse_color(value: str) -> Color:
+    normalized = validate_color_value(value)
+    try:
+        return Color(normalized)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail="Invalid color value") from exc
+        raise HTTPException(status_code=400, detail="Некорректное значение цвета") from exc
 
 
 def as_hex(color: Color) -> str:
