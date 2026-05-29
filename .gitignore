@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env.local
+.DS_Store
+src/backend/.conda/
+__pycache__/
+*.pyc
+report/out/
